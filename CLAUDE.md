@@ -14,6 +14,12 @@ Structured GitHub issue management for Claude Code agents. You have 7 tools for 
 | `view_issue` | View full issue details including all comments |
 | `add_comment` | Add a comment to an existing issue |
 | `search_issues` | Search issues by keyword across title and body |
+| `git_status` | Structured git status: branch, clean, staged/modified/untracked, ahead/behind |
+| `git_diff` | Structured git diff: per-file stats and optional full diff text |
+| `git_log` | Recent commits as JSON: hash, author, date, message |
+| `stage_files` | Stage specific files with git add (comma-separated paths) |
+| `create_commit` | Create a commit with Co-Authored-By trailer appended automatically |
+| `git_push` | Push to remote (force push always refused) |
 
 ## Repo parameter
 

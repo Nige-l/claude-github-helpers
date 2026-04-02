@@ -582,6 +582,364 @@ PYEOF
 }
 
 # ---------------------------------------------------------------------------
+# Git helpers
+# ---------------------------------------------------------------------------
+
+check_git() {
+    if ! command -v git &>/dev/null; then
+        json_error "git not found in PATH" 127
+    fi
+}
+
+# cd into repo_path if provided, else stay in cwd.
+# Sets global REPO_PATH for use in subsequent git calls.
+setup_repo_path() {
+    local repo_path="$1"
+    if [[ -n "$repo_path" ]]; then
+        if [[ ! -d "$repo_path" ]]; then
+            json_error "repo-path does not exist: $repo_path" 1
+        fi
+        cd "$repo_path"
+    fi
+    if ! git rev-parse --git-dir &>/dev/null 2>&1; then
+        json_error "Not a git repository: $(pwd)" 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# tool: git_status
+# ---------------------------------------------------------------------------
+
+tool_git_status() {
+    parse_named_args "$@"
+    local repo_path
+    repo_path=$(opt "repo-path" "")
+    check_git
+    setup_repo_path "$repo_path"
+
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'DETACHED')
+
+    local porcelain
+    local stderr_file
+    stderr_file=$(mktemp)
+    if ! porcelain=$(git status --porcelain 2>"$stderr_file"); then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        json_error "git status failed" 1 "$stderr_content"
+    fi
+    rm -f "$stderr_file"
+
+    # ahead/behind relative to upstream
+    local ahead=0 behind=0
+    local upstream
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+    if [[ -n "$upstream" ]]; then
+        local counts
+        counts=$(git rev-list --left-right --count HEAD..."$upstream" 2>/dev/null || printf '0\t0')
+        ahead=$(printf '%s' "$counts" | awk '{print $1}')
+        behind=$(printf '%s' "$counts" | awk '{print $2}')
+    fi
+
+    python3 - "$branch" "$porcelain" "$ahead" "$behind" <<'PYEOF'
+import sys, json
+
+branch = sys.argv[1]
+porcelain = sys.argv[2]
+ahead = int(sys.argv[3])
+behind = int(sys.argv[4])
+
+staged = []
+modified = []
+untracked = []
+
+for line in porcelain.splitlines():
+    if len(line) < 2:
+        continue
+    x, y, path = line[0], line[1], line[3:]
+    if x == '?' and y == '?':
+        untracked.append(path)
+    else:
+        if x not in (' ', '?'):
+            staged.append(path)
+        if y not in (' ', '?'):
+            modified.append(path)
+
+clean = (len(staged) == 0 and len(modified) == 0 and len(untracked) == 0)
+print(json.dumps({
+    "branch": branch,
+    "clean": clean,
+    "staged": staged,
+    "modified": modified,
+    "untracked": untracked,
+    "ahead": ahead,
+    "behind": behind,
+}))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# tool: git_diff
+# ---------------------------------------------------------------------------
+
+tool_git_diff() {
+    parse_named_args "$@"
+    local repo_path
+    repo_path=$(opt "repo-path" "")
+    local staged
+    staged=$(opt "staged" "false")
+    local stat_only
+    stat_only=$(opt "stat-only" "false")
+    check_git
+    setup_repo_path "$repo_path"
+
+    local stat_args=(git diff --numstat)
+    local diff_args=(git diff)
+    if [[ "$staged" == "true" ]]; then
+        stat_args+=(--cached)
+        diff_args+=(--cached)
+    fi
+
+    local stderr_file numstat diff_output
+    stderr_file=$(mktemp)
+    if ! numstat=$("${stat_args[@]}" 2>"$stderr_file"); then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        json_error "git diff --numstat failed" 1 "$stderr_content"
+    fi
+
+    diff_output=""
+    if [[ "$stat_only" != "true" ]]; then
+        if ! diff_output=$("${diff_args[@]}" 2>"$stderr_file"); then
+            local stderr_content
+            stderr_content=$(cat "$stderr_file")
+            rm -f "$stderr_file"
+            json_error "git diff failed" 1 "$stderr_content"
+        fi
+    fi
+    rm -f "$stderr_file"
+
+    python3 - "$numstat" "$diff_output" "$stat_only" <<'PYEOF'
+import sys, json
+
+numstat = sys.argv[1]
+diff_output = sys.argv[2]
+stat_only = sys.argv[3] == "true"
+
+files = []
+total_ins = 0
+total_del = 0
+
+for line in numstat.splitlines():
+    parts = line.split("\t", 2)
+    if len(parts) != 3:
+        continue
+    ins_s, del_s, path = parts
+    ins = int(ins_s) if ins_s.isdigit() else 0
+    dels = int(del_s) if del_s.isdigit() else 0
+    total_ins += ins
+    total_del += dels
+    files.append({"path": path, "insertions": ins, "deletions": dels})
+
+result = {
+    "files_changed": len(files),
+    "insertions": total_ins,
+    "deletions": total_del,
+    "files": files,
+}
+if not stat_only:
+    result["diff"] = diff_output
+
+print(json.dumps(result))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# tool: git_log
+# ---------------------------------------------------------------------------
+
+tool_git_log() {
+    parse_named_args "$@"
+    local repo_path
+    repo_path=$(opt "repo-path" "")
+    local limit
+    limit=$(opt "limit" "10")
+    local since
+    since=$(opt "since" "")
+    check_git
+    setup_repo_path "$repo_path"
+
+    local cmd=(git log "--pretty=format:%H%x1F%h%x1F%an%x1F%aI%x1F%s" "-$limit")
+    [[ -n "$since" ]] && cmd+=(--since="$since")
+
+    local raw stderr_file
+    stderr_file=$(mktemp)
+    if ! raw=$("${cmd[@]}" 2>"$stderr_file"); then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        json_error "git log failed" 1 "$stderr_content"
+    fi
+    rm -f "$stderr_file"
+
+    python3 - "$raw" <<'PYEOF'
+import sys, json
+
+raw = sys.argv[1]
+commits = []
+for line in raw.splitlines():
+    parts = line.split("\x1f", 4)
+    if len(parts) != 5:
+        continue
+    hash_, short_hash, author, date, message = parts
+    commits.append({
+        "hash": hash_,
+        "short_hash": short_hash,
+        "author": author,
+        "date": date,
+        "message": message,
+    })
+print(json.dumps({"commits": commits}))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# tool: stage_files
+# ---------------------------------------------------------------------------
+
+tool_stage_files() {
+    parse_named_args "$@"
+    local repo_path
+    repo_path=$(opt "repo-path" "")
+    require_opt "files"
+    local files_raw="${OPTS[files]}"
+    check_git
+    setup_repo_path "$repo_path"
+
+    IFS=',' read -ra file_list <<< "$files_raw"
+
+    local staged_arr=()
+    local errors_arr=()
+
+    for raw_file in "${file_list[@]}"; do
+        # Trim whitespace
+        local f
+        f="${raw_file#"${raw_file%%[![:space:]]*}"}"
+        f="${f%"${f##*[![:space:]]}"}"
+        [[ -z "$f" ]] && continue
+
+        local stderr_file
+        stderr_file=$(mktemp)
+        if ! git add -- "$f" 2>"$stderr_file"; then
+            local stderr_content
+            stderr_content=$(cat "$stderr_file")
+            rm -f "$stderr_file"
+            errors_arr+=("{\"file\":\"$(json_str "$f")\",\"error\":\"$(json_str "$stderr_content")\"}")
+        else
+            rm -f "$stderr_file"
+            staged_arr+=("\"$(json_str "$f")\"")
+        fi
+    done
+
+    local staged_json="[$(IFS=','; printf '%s' "${staged_arr[*]:-}")]"
+    local errors_json="[$(IFS=','; printf '%s' "${errors_arr[*]:-}")]"
+    printf '{"staged":%s,"errors":%s}\n' "$staged_json" "$errors_json"
+}
+
+# ---------------------------------------------------------------------------
+# tool: create_commit
+# ---------------------------------------------------------------------------
+
+tool_create_commit() {
+    parse_named_args "$@"
+    local repo_path
+    repo_path=$(opt "repo-path" "")
+    require_opt "message"
+    local message="${OPTS[message]}"
+    local co_author
+    co_author=$(opt "co-author" "Claude Opus 4.6 (1M context) <noreply@anthropic.com>")
+    check_git
+    setup_repo_path "$repo_path"
+
+    # Append Co-Authored-By trailer if co-author is non-empty
+    local full_message="$message"
+    if [[ -n "$co_author" ]]; then
+        full_message="$message
+
+Co-Authored-By: $co_author"
+    fi
+
+    local raw stderr_file
+    stderr_file=$(mktemp)
+    if ! raw=$(git commit -m "$full_message" 2>"$stderr_file"); then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        local stdout_content="$raw"
+        rm -f "$stderr_file"
+        json_error "git commit failed: $(printf '%s' "$stdout_content $stderr_content" | head -c 500)" 1 "$stderr_content"
+    fi
+    rm -f "$stderr_file"
+
+    local hash short_hash files_committed
+    hash=$(git rev-parse HEAD 2>/dev/null || printf '')
+    short_hash=$(git rev-parse --short HEAD 2>/dev/null || printf '')
+    # Count files in the commit
+    files_committed=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | wc -l | tr -d ' ')
+
+    printf '{"hash":"%s","short_hash":"%s","message":"%s","files_committed":%s}\n' \
+        "$(json_str "$hash")" "$(json_str "$short_hash")" "$(json_str "$message")" "$files_committed"
+}
+
+# ---------------------------------------------------------------------------
+# tool: git_push
+# ---------------------------------------------------------------------------
+
+tool_git_push() {
+    parse_named_args "$@"
+    local repo_path
+    repo_path=$(opt "repo-path" "")
+    local remote
+    remote=$(opt "remote" "origin")
+    local branch
+    branch=$(opt "branch" "")
+
+    # Safety: refuse force push regardless of any args
+    if [[ -n "${OPTS[force]:-}" ]]; then
+        json_error "Force push is not allowed" 1
+    fi
+
+    check_git
+    setup_repo_path "$repo_path"
+
+    if [[ -z "$branch" ]]; then
+        branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || printf '')
+    fi
+
+    # Count commits that will be pushed
+    local upstream
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+    local commits_pushed=0
+    if [[ -n "$upstream" ]]; then
+        commits_pushed=$(git rev-list --count "$upstream"..HEAD 2>/dev/null || printf '0')
+    fi
+
+    local stderr_file
+    stderr_file=$(mktemp)
+    if ! git push "$remote" "$branch" 2>"$stderr_file"; then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        json_error "git push failed" 1 "$stderr_content"
+    fi
+    rm -f "$stderr_file"
+
+    printf '{"pushed":true,"remote":"%s","branch":"%s","commits_pushed":%s}\n' \
+        "$(json_str "$remote")" "$(json_str "$branch")" "$commits_pushed"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -600,12 +958,18 @@ case "$TOOL" in
     view_issue)     tool_view_issue     "$@" ;;
     add_comment)    tool_add_comment    "$@" ;;
     search_issues)  tool_search_issues  "$@" ;;
+    git_status)     tool_git_status     "$@" ;;
+    git_diff)       tool_git_diff       "$@" ;;
+    git_log)        tool_git_log        "$@" ;;
+    stage_files)    tool_stage_files    "$@" ;;
+    create_commit)  tool_create_commit  "$@" ;;
+    git_push)       tool_git_push       "$@" ;;
     "")
-        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues"]}\n'
+        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push"]}\n'
         exit 1
         ;;
     *)
-        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues"]}\n' "$(json_str "$TOOL")"
+        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push"]}\n' "$(json_str "$TOOL")"
         exit 1
         ;;
 esac

@@ -192,6 +192,81 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['repo', 'numbers'],
       },
     },
+    {
+      name: 'git_status',
+      description: 'Run git status on a repository and return structured JSON with branch, clean flag, staged/modified/untracked files, and ahead/behind counts.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          repo_path: { type: 'string', description: 'Absolute path to the git repository. Defaults to current working directory.' },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'git_diff',
+      description: 'Get git diff as structured JSON with per-file insertion/deletion stats and optionally the full diff text.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          repo_path: { type: 'string', description: 'Absolute path to the git repository. Defaults to current working directory.' },
+          staged: { type: 'boolean', description: 'If true, diff staged changes (--cached). Default: false.' },
+          stat_only: { type: 'boolean', description: 'If true, omit the full diff text and return only stats. Default: false.' },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'git_log',
+      description: 'Get recent git commits as structured JSON.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          repo_path: { type: 'string', description: 'Absolute path to the git repository. Defaults to current working directory.' },
+          limit: { type: 'number', description: 'Number of commits to return. Default: 10.' },
+          since: { type: 'string', description: 'Optional date filter, e.g. "2024-01-01" or "1 week ago".' },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'stage_files',
+      description: 'Stage specific files with git add. Returns lists of successfully staged files and any errors.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          files: { type: 'string', description: 'Comma-separated list of file paths to stage.' },
+          repo_path: { type: 'string', description: 'Absolute path to the git repository. Defaults to current working directory.' },
+        },
+        required: ['files'],
+      },
+    },
+    {
+      name: 'create_commit',
+      description: 'Create a git commit with the given message. Always appends a Co-Authored-By trailer for the AI co-author.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          message: { type: 'string', description: 'Commit message.' },
+          repo_path: { type: 'string', description: 'Absolute path to the git repository. Defaults to current working directory.' },
+          co_author: { type: 'string', description: 'Co-author trailer value. Default: "Claude Opus 4.6 (1M context) <noreply@anthropic.com>".' },
+        },
+        required: ['message'],
+      },
+    },
+    {
+      name: 'git_push',
+      description: 'Push commits to a remote. Force push is always refused. Returns branch, remote, and number of commits pushed.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          repo_path: { type: 'string', description: 'Absolute path to the git repository. Defaults to current working directory.' },
+          remote: { type: 'string', description: 'Remote name. Default: "origin".' },
+          branch: { type: 'string', description: 'Branch to push. Defaults to the current branch.' },
+        },
+        required: [],
+      },
+    },
   ],
 }))
 
@@ -302,6 +377,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const cmdArgs = ['batch_close', '--repo', args.repo, '--numbers', args.numbers]
         if (args?.comment) cmdArgs.push('--comment', String(args.comment))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'git_status': {
+        const cmdArgs = ['git_status']
+        if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'git_diff': {
+        const cmdArgs = ['git_diff']
+        if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
+        if (args?.staged === true) cmdArgs.push('--staged', 'true')
+        if (args?.stat_only === true) cmdArgs.push('--stat-only', 'true')
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'git_log': {
+        const cmdArgs = ['git_log']
+        if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
+        if (args?.limit !== undefined) cmdArgs.push('--limit', String(args.limit))
+        if (args?.since) cmdArgs.push('--since', String(args.since))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'stage_files': {
+        if (typeof args?.files !== 'string' || args.files === '') {
+          return { content: [{ type: 'text', text: 'stage_files: files is required and must be a non-empty comma-separated string' }], isError: true }
+        }
+        const cmdArgs = ['stage_files', '--files', args.files]
+        if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'create_commit': {
+        if (typeof args?.message !== 'string' || args.message === '') {
+          return { content: [{ type: 'text', text: 'create_commit: message is required and must be a non-empty string' }], isError: true }
+        }
+        const cmdArgs = ['create_commit', '--message', args.message]
+        if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
+        if (args?.co_author !== undefined) cmdArgs.push('--co-author', String(args.co_author))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'git_push': {
+        const cmdArgs = ['git_push']
+        if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
+        if (args?.remote) cmdArgs.push('--remote', String(args.remote))
+        if (args?.branch) cmdArgs.push('--branch', String(args.branch))
         return formatResult(await runScript(cmdArgs))
       }
 
