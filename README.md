@@ -49,6 +49,13 @@ This loads the plugin for a single session without installing it globally.
 | `view_issue` | View full issue + comments | `repo`, `number` |
 | `add_comment` | Comment on an issue | `repo`, `number`, `body` |
 | `search_issues` | Search by keyword | `repo`, `query`, `state`, `limit` |
+| `batch_close` | Close multiple issues at once | `repo`, `numbers` (array), `comment` (optional) |
+| `git_status` | Show working tree status | `repo` |
+| `git_diff` | Show file changes | `repo`, `staged` (boolean) |
+| `git_log` | Show commit history | `repo`, `limit` |
+| `stage_files` | Stage files for commit | `repo`, `files` (array) |
+| `create_commit` | Create a commit | `repo`, `message`, `files` (array) |
+| `git_push` | Push commits to remote | `repo`, `branch`, `force` (boolean) |
 
 All tools return structured JSON. The `repo` parameter takes `owner/repo` format (e.g. `Nige-l/WorldOfFantasyWarStuff`).
 
