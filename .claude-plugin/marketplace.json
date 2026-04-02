@@ -1,0 +1,14 @@
+{
+  "name": "claude-github-helpers",
+  "owner": {
+    "name": "Nigel Johnson"
+  },
+  "plugins": [
+    {
+      "name": "github-helpers",
+      "description": "Structured GitHub issue management for Claude Code agents — list, create, close, reopen, view, comment, and search issues",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "github-helpers",
+  "description": "Structured GitHub issue management for Claude Code agents — list, create, close, reopen, view, comment, and search issues. Returns structured JSON via the gh CLI.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Nigel Johnson"
+  },
+  "keywords": [
+    "github",
+    "issues",
+    "project-management",
+    "gh",
+    "issue-tracker"
+  ]
+}
