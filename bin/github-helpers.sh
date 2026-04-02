@@ -450,6 +450,83 @@ tool_add_comment() {
 }
 
 # ---------------------------------------------------------------------------
+# tool: batch_close
+# ---------------------------------------------------------------------------
+
+tool_batch_close() {
+    parse_named_args "$@"
+
+    require_opt "repo"
+    local repo="${OPTS[repo]}"
+    require_opt "numbers"
+    local numbers_raw="${OPTS[numbers]}"
+    local comment
+    comment=$(opt "comment" "")
+
+    check_gh
+
+    # Split comma-separated numbers into an array
+    IFS=',' read -ra number_list <<< "$numbers_raw"
+
+    local closed_arr=()
+    local failed_arr=()
+    local comment_added
+    [[ -n "$comment" ]] && comment_added="true" || comment_added="false"
+
+    for raw_num in "${number_list[@]}"; do
+        # Trim whitespace
+        local num
+        num="${raw_num#"${raw_num%%[![:space:]]*}"}"
+        num="${num%"${num##*[![:space:]]}"}"
+
+        # Validate: must be a positive integer
+        if [[ ! "$num" =~ ^[0-9]+$ ]]; then
+            failed_arr+=("{\"number\":\"$(json_str "$num")\",\"error\":\"invalid issue number — must be a positive integer\"}")
+            continue
+        fi
+
+        local cmd=(gh issue close "$num" -R "$repo")
+        [[ -n "$comment" ]] && cmd+=(--comment "$comment")
+
+        local stderr_file
+        stderr_file=$(mktemp)
+        if ! "${cmd[@]}" >/dev/null 2>"$stderr_file"; then
+            local stderr_content
+            stderr_content=$(cat "$stderr_file")
+            rm -f "$stderr_file"
+            failed_arr+=("{\"number\":$num,\"error\":\"$(json_str "$stderr_content")\"}")
+        else
+            rm -f "$stderr_file"
+            closed_arr+=("$num")
+        fi
+    done
+
+    # Build JSON arrays
+    local closed_json="["
+    local first=1
+    for n in "${closed_arr[@]:-}"; do
+        [[ -z "$n" ]] && continue
+        [[ $first -eq 0 ]] && closed_json+=","
+        closed_json+="$n"
+        first=0
+    done
+    closed_json+="]"
+
+    local failed_json="["
+    first=1
+    for f in "${failed_arr[@]:-}"; do
+        [[ -z "$f" ]] && continue
+        [[ $first -eq 0 ]] && failed_json+=","
+        failed_json+="$f"
+        first=0
+    done
+    failed_json+="]"
+
+    printf '{"closed":%s,"failed":%s,"comment_added":%s}\n' \
+        "$closed_json" "$failed_json" "$comment_added"
+}
+
+# ---------------------------------------------------------------------------
 # tool: search_issues
 # ---------------------------------------------------------------------------
 
@@ -518,16 +595,17 @@ case "$TOOL" in
     list_issues)    tool_list_issues    "$@" ;;
     create_issue)   tool_create_issue   "$@" ;;
     close_issue)    tool_close_issue    "$@" ;;
+    batch_close)    tool_batch_close    "$@" ;;
     reopen_issue)   tool_reopen_issue   "$@" ;;
     view_issue)     tool_view_issue     "$@" ;;
     add_comment)    tool_add_comment    "$@" ;;
     search_issues)  tool_search_issues  "$@" ;;
     "")
-        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","reopen_issue","view_issue","add_comment","search_issues"]}\n'
+        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues"]}\n'
         exit 1
         ;;
     *)
-        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","reopen_issue","view_issue","add_comment","search_issues"]}\n' "$(json_str "$TOOL")"
+        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues"]}\n' "$(json_str "$TOOL")"
         exit 1
         ;;
 esac

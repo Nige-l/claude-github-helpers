@@ -9,6 +9,7 @@ Structured GitHub issue management for Claude Code agents. You have 7 tools for 
 | `list_issues` | List and filter open/closed issues by label, assignee, milestone |
 | `create_issue` | Create a new issue with title, body, labels, and assignee |
 | `close_issue` | Close an issue, optionally leaving a comment |
+| `batch_close` | Close multiple issues at once by comma-separated number list |
 | `reopen_issue` | Reopen a closed issue, optionally leaving a comment |
 | `view_issue` | View full issue details including all comments |
 | `add_comment` | Add a comment to an existing issue |

@@ -179,6 +179,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['repo', 'query'],
       },
     },
+    {
+      name: 'batch_close',
+      description: 'Close multiple GitHub issues at once. Returns lists of successfully closed and failed issue numbers.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          repo: { type: 'string', description: 'Repository in "owner/repo" format' },
+          numbers: { type: 'string', description: 'Comma-separated issue numbers to close (e.g. "1,2,3")' },
+          comment: { type: 'string', description: 'Optional comment to post on each issue before closing' },
+        },
+        required: ['repo', 'numbers'],
+      },
+    },
   ],
 }))
 
@@ -277,6 +290,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const cmdArgs = ['search_issues', '--repo', args.repo, '--query', args.query]
         if (args?.limit !== undefined) cmdArgs.push('--limit', String(args.limit))
         if (args?.state) cmdArgs.push('--state', String(args.state))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'batch_close': {
+        if (typeof args?.repo !== 'string' || args.repo === '') {
+          return { content: [{ type: 'text', text: 'batch_close: repo is required and must be a non-empty string' }], isError: true }
+        }
+        if (typeof args?.numbers !== 'string' || args.numbers === '') {
+          return { content: [{ type: 'text', text: 'batch_close: numbers is required and must be a non-empty comma-separated string' }], isError: true }
+        }
+        const cmdArgs = ['batch_close', '--repo', args.repo, '--numbers', args.numbers]
+        if (args?.comment) cmdArgs.push('--comment', String(args.comment))
         return formatResult(await runScript(cmdArgs))
       }
 
