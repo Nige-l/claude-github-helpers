@@ -1,8 +1,8 @@
 # claude-github-helpers
 
-Open-source GitHub issue management plugin for Claude Code agents.
+Open-source GitHub issue management and local git plugin for Claude Code agents.
 
-List, create, close, reopen, view, comment on, and search GitHub issues — all returning structured JSON. Gives Claude Code agents reliable, parseable access to GitHub issue data without shelling out raw `gh` commands.
+List, create, close, reopen, view, comment on, search, and batch-close GitHub issues — plus structured local git operations (status, diff, log, stage, commit, push) — all returning parseable JSON. Gives Claude Code agents reliable access to GitHub and git without shelling out raw `gh` or `git` commands.
 
 ## Requirements
 
@@ -40,6 +40,8 @@ This loads the plugin for a single session without installing it globally.
 
 ## Tools
 
+### GitHub issue tools
+
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `list_issues` | List and filter issues | `repo`, `state` (open/closed/all), `labels`, `assignee`, `milestone`, `limit` |
@@ -49,15 +51,22 @@ This loads the plugin for a single session without installing it globally.
 | `view_issue` | View full issue + comments | `repo`, `number` |
 | `add_comment` | Comment on an issue | `repo`, `number`, `body` |
 | `search_issues` | Search by keyword | `repo`, `query`, `state`, `limit` |
-| `batch_close` | Close multiple issues at once | `repo`, `numbers` (array), `comment` (optional) |
-| `git_status` | Show working tree status | `repo` |
-| `git_diff` | Show file changes | `repo`, `staged` (boolean) |
-| `git_log` | Show commit history | `repo`, `limit` |
-| `stage_files` | Stage files for commit | `repo`, `files` (array) |
-| `create_commit` | Create a commit | `repo`, `message`, `files` (array) |
-| `git_push` | Push commits to remote | `repo`, `branch`, `force` (boolean) |
+| `batch_close` | Close multiple issues at once | `repo`, `numbers` (comma-separated, e.g. `"1,2,3"`), `comment` (optional) |
 
-All tools return structured JSON. The `repo` parameter takes `owner/repo` format (e.g. `Nige-l/WorldOfFantasyWarStuff`).
+The `repo` parameter takes `owner/repo` format (e.g. `Nige-l/WorldOfFantasyWarStuff`). `labels` and `numbers` are comma-separated strings, not JSON arrays.
+
+### Local git tools
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `git_status` | Branch, clean flag, staged/modified/untracked files, ahead/behind | `repo_path` (optional, defaults to cwd) |
+| `git_diff` | Per-file stats and optional full diff text | `repo_path`, `staged` (bool), `stat_only` (bool) |
+| `git_log` | Recent commits as JSON (hash, author, date, message) | `repo_path`, `limit`, `since` |
+| `stage_files` | Stage specific files with `git add` | `files` (comma-separated), `repo_path` |
+| `create_commit` | Commit with `Co-Authored-By` trailer appended automatically | `message`, `repo_path`, `co_author` |
+| `git_push` | Push to remote (force push always refused) | `repo_path`, `remote`, `branch` |
+
+All tools return structured JSON.
 
 ## Skills
 
@@ -90,6 +99,18 @@ search_issues(repo: "owner/repo", query: "rubber-banding movement", state: "all"
 **Add investigation notes:**
 ```
 add_comment(repo: "owner/repo", number: 42, body: "Traced to PacketHandler.cs:87 — stale ref after entity Add")
+```
+
+**Close a batch of stale issues:**
+```
+batch_close(repo: "owner/repo", numbers: "101,102,103", comment: "Superseded by #120")
+```
+
+**Stage, commit, and push in one flow:**
+```
+stage_files(files: "src/foo.ts,src/bar.ts")
+create_commit(message: "[fix] handle null case in foo")
+git_push()
 ```
 
 ## Contributing
