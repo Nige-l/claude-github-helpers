@@ -68,6 +68,18 @@ The `repo` parameter takes `owner/repo` format (e.g. `Nige-l/WorldOfFantasyWarSt
 
 All tools return structured JSON.
 
+## Why not just call `gh` directly?
+
+Agents *can* shell out to `gh`, but the wrapper tools meaningfully reduce token use and failure modes:
+
+- **Shorter tool invocations.** A typical `list_issues(repo: "x/y", state: "open", labels: "bug")` is ~14 tokens. The equivalent agent-written command — `gh issue list -R x/y --state open --label bug --json number,title,state,labels,assignees,milestone,url,createdAt,updatedAt --limit 30` — is ~37. That's roughly a 60% reduction on command output tokens, and it compounds across every GitHub touch in a session.
+- **Stable, minimal response schema.** You don't pay tokens for `gh`'s human-formatting whitespace, TTY color codes, or the `--json` field list you had to specify. Fields are fixed so the agent never has to guess the shape.
+- **Fewer round-trips.** `view_issue` returns the issue body *and* all comments in one call — raw `gh` needs `gh issue view` plus a second `gh api repos/.../issues/N/comments` invocation (and `gh issue view --comments` currently emits a GraphQL deprecation warning on some repos). `batch_close` turns N tool uses into 1.
+- **No interactive-prompt traps.** `gh issue create` without `--body` drops into an editor in non-interactive contexts and hangs the agent; the wrapper always passes a body. Same class of fix for other silent-failure edges.
+- **Structured errors.** Failures come back as JSON with a reason string, so the agent doesn't burn tokens re-reading stderr.
+
+In practice the biggest win isn't any single call — it's that the agent stops paying the "remind me of the `gh` flags" tax on every GitHub action.
+
 ## Skills
 
 | Skill | Description |
