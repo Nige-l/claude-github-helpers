@@ -132,7 +132,11 @@ body_args() {
 }
 
 cleanup_body_file() {
-    [[ -n "$BODY_TEMP_FILE" ]] && rm -f "$BODY_TEMP_FILE" && BODY_TEMP_FILE=""
+    if [[ -n "$BODY_TEMP_FILE" ]]; then
+        rm -f "$BODY_TEMP_FILE"
+        BODY_TEMP_FILE=""
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------

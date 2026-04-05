@@ -300,7 +300,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           return { content: [{ type: 'text', text: 'create_issue: title is required and must be a non-empty string' }], isError: true }
         }
         const cmdArgs = ['create_issue', '--repo', args.repo, '--title', args.title]
-        if (args?.body) cmdArgs.push('--body', String(args.body))
+        cmdArgs.push('--body', args?.body ? String(args.body) : '')
         if (args?.labels) cmdArgs.push('--labels', String(args.labels))
         if (args?.assignee) cmdArgs.push('--assignee', String(args.assignee))
         return formatResult(await runScript(cmdArgs))
