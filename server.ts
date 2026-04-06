@@ -345,9 +345,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (typeof args?.repo !== 'string' || args.repo === '') {
           return { content: [{ type: 'text', text: 'add_comment: repo is required and must be a non-empty string' }], isError: true }
         }
-        if (typeof args?.number !== 'number') {
+        const addCommentNum = typeof args?.number === 'string' ? parseInt(args.number, 10) : args?.number;
+        if (!addCommentNum || isNaN(addCommentNum)) {
           return { content: [{ type: 'text', text: 'add_comment: number is required and must be a number' }], isError: true }
         }
+        args = { ...args, number: addCommentNum };
         if (typeof args?.body !== 'string' || args.body === '') {
           return { content: [{ type: 'text', text: 'add_comment: body is required and must be a non-empty string' }], isError: true }
         }
