@@ -586,6 +586,57 @@ PYEOF
 }
 
 # ---------------------------------------------------------------------------
+# tool: sub_issue
+# ---------------------------------------------------------------------------
+
+tool_sub_issue() {
+    parse_named_args "$@"
+
+    require_opt "repo"
+    local repo="${OPTS[repo]}"
+    require_opt "parent"
+    local parent="${OPTS[parent]}"
+    validate_number "$parent"
+    require_opt "child"
+    local child="${OPTS[child]}"
+    validate_number "$child"
+
+    check_gh
+
+    # Step 1: get child issue node_id
+    local child_raw stderr_file
+    stderr_file=$(mktemp)
+    if ! child_raw=$(gh api "repos/$repo/issues/$child" --jq '.node_id' 2>"$stderr_file"); then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        json_error "Failed to fetch child issue #$child node_id" 1 "$stderr_content"
+    fi
+    rm -f "$stderr_file"
+
+    local node_id
+    node_id=$(printf '%s' "$child_raw" | tr -d '[:space:]')
+    if [[ -z "$node_id" ]]; then
+        json_error "Child issue #$child has empty node_id — issue may not exist" 1
+    fi
+
+    # Step 2: link child as sub-issue of parent
+    local link_raw
+    stderr_file=$(mktemp)
+    if ! link_raw=$(gh api --method POST "repos/$repo/issues/$parent/sub_issues" \
+        --field "sub_issue_id=$node_id" 2>"$stderr_file"); then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        json_error "Failed to link #$child as sub-issue of #$parent" 1 "$stderr_content"
+    fi
+    rm -f "$stderr_file"
+
+    printf '{"parent":%s,"child":%s,"node_id":"%s","linked":true}\n' \
+        "$parent" "$child" "$(json_str "$node_id")"
+}
+
+# ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
 
@@ -968,12 +1019,13 @@ case "$TOOL" in
     stage_files)    tool_stage_files    "$@" ;;
     create_commit)  tool_create_commit  "$@" ;;
     git_push)       tool_git_push       "$@" ;;
+    sub_issue)      tool_sub_issue      "$@" ;;
     "")
-        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push"]}\n'
+        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push","sub_issue"]}\n'
         exit 1
         ;;
     *)
-        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push"]}\n' "$(json_str "$TOOL")"
+        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push","sub_issue"]}\n' "$(json_str "$TOOL")"
         exit 1
         ;;
 esac

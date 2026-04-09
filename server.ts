@@ -101,14 +101,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'create_issue',
-      description: 'Create a new GitHub issue.',
+      description: 'Create a new GitHub issue. Use the type parameter for common issue types — it auto-applies the right labels (bug, tool-bug, enhancement, critical, tool-request, review).',
       inputSchema: {
         type: 'object' as const,
         properties: {
           repo: { type: 'string', description: 'Repository in "owner/repo" format' },
           title: { type: 'string', description: 'Issue title' },
           body: { type: 'string', description: 'Issue body (markdown supported)' },
-          labels: { type: 'string', description: 'Comma-separated label names to apply' },
+          type: { type: 'string', enum: ['bug', 'tool-bug', 'enhancement', 'critical', 'tool-request', 'review'], description: 'Issue type — auto-applies labels: bug→bug, tool-bug→bug+process, enhancement→enhancement, critical→critical, tool-request→enhancement+process, review→review' },
+          labels: { type: 'string', description: 'Comma-separated label names to apply (combined with type labels if both given)' },
           assignee: { type: 'string', description: 'Username to assign the issue to' },
         },
         required: ['repo', 'title'],
@@ -190,6 +191,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           comment: { type: 'string', description: 'Optional comment to post on each issue before closing' },
         },
         required: ['repo', 'numbers'],
+      },
+    },
+    {
+      name: 'sub_issue',
+      description: 'Link a child issue as a sub-issue of a parent issue using the GitHub sub-issues API.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          repo: { type: 'string', description: 'Repository in "owner/repo" format' },
+          parent: { type: 'number', description: 'Parent issue number' },
+          child: { type: 'number', description: 'Child issue number to link as sub-issue' },
+        },
+        required: ['repo', 'parent', 'child'],
       },
     },
     {
@@ -299,9 +313,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (typeof args?.title !== 'string' || args.title === '') {
           return { content: [{ type: 'text', text: 'create_issue: title is required and must be a non-empty string' }], isError: true }
         }
+        // Map type to labels, matching wofws issue create CLI behaviour
+        const typeLabels: Record<string, string> = {
+          'bug': 'bug',
+          'tool-bug': 'bug,process',
+          'enhancement': 'enhancement',
+          'critical': 'critical',
+          'tool-request': 'enhancement,process',
+          'review': 'review',
+        }
+        const typeLabel = args?.type ? typeLabels[String(args.type)] ?? '' : ''
+        const explicitLabels = args?.labels ? String(args.labels) : ''
+        const allLabels = [typeLabel, explicitLabels].filter(Boolean).join(',')
         const cmdArgs = ['create_issue', '--repo', args.repo, '--title', args.title]
         cmdArgs.push('--body', args?.body ? String(args.body) : '')
-        if (args?.labels) cmdArgs.push('--labels', String(args.labels))
+        if (allLabels) cmdArgs.push('--labels', allLabels)
         if (args?.assignee) cmdArgs.push('--assignee', String(args.assignee))
         return formatResult(await runScript(cmdArgs))
       }
@@ -349,11 +375,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!addCommentNum || isNaN(addCommentNum)) {
           return { content: [{ type: 'text', text: 'add_comment: number is required and must be a number' }], isError: true }
         }
-        args = { ...args, number: addCommentNum };
-        if (typeof args?.body !== 'string' || args.body === '') {
+        const parsedArgs = { ...args, number: addCommentNum };
+        if (typeof parsedArgs?.body !== 'string' || parsedArgs.body === '') {
           return { content: [{ type: 'text', text: 'add_comment: body is required and must be a non-empty string' }], isError: true }
         }
-        const cmdArgs = ['add_comment', '--repo', args.repo, '--number', String(args.number), '--body', args.body]
+        const cmdArgs = ['add_comment', '--repo', parsedArgs.repo, '--number', String(parsedArgs.number), '--body', parsedArgs.body]
         return formatResult(await runScript(cmdArgs))
       }
 
@@ -379,6 +405,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         const cmdArgs = ['batch_close', '--repo', args.repo, '--numbers', args.numbers]
         if (args?.comment) cmdArgs.push('--comment', String(args.comment))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'sub_issue': {
+        if (typeof args?.repo !== 'string' || args.repo === '') {
+          return { content: [{ type: 'text', text: 'sub_issue: repo is required and must be a non-empty string' }], isError: true }
+        }
+        if (typeof args?.parent !== 'number') {
+          return { content: [{ type: 'text', text: 'sub_issue: parent is required and must be a number' }], isError: true }
+        }
+        if (typeof args?.child !== 'number') {
+          return { content: [{ type: 'text', text: 'sub_issue: child is required and must be a number' }], isError: true }
+        }
+        const cmdArgs = ['sub_issue', '--repo', args.repo, '--parent', String(args.parent), '--child', String(args.child)]
         return formatResult(await runScript(cmdArgs))
       }
 
