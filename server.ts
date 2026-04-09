@@ -281,6 +281,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: [],
       },
     },
+    {
+      name: 'commit_status',
+      description: 'Groups uncommitted changes by area prefix (server/, client/, shared/, docs/, .claude/, bin/) and suggests a commit message prefix for each group. Useful for deciding how to split or label commits before staging.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          repo_path: { type: 'string', description: 'Absolute path to the git repository. Defaults to current working directory.' },
+        },
+        required: [],
+      },
+    },
   ],
 }))
 
@@ -468,6 +479,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
         if (args?.remote) cmdArgs.push('--remote', String(args.remote))
         if (args?.branch) cmdArgs.push('--branch', String(args.branch))
+        return formatResult(await runScript(cmdArgs))
+      }
+
+      case 'commit_status': {
+        const cmdArgs = ['commit_status']
+        if (args?.repo_path) cmdArgs.push('--repo-path', String(args.repo_path))
         return formatResult(await runScript(cmdArgs))
       }
 

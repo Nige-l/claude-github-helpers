@@ -878,12 +878,39 @@ tool_stage_files() {
     local staged_arr=()
     local errors_arr=()
 
+    # Blocked glob patterns (dot and star expand to everything)
+    local BLOCKED_GLOBS=("." "*")
+    # Blocked filename patterns (sensitive file types)
+    local BLOCKED_PATTERNS=(".env" "*.pem" "*.key" "id_rsa" "credentials*" "*.secret")
+
     for raw_file in "${file_list[@]}"; do
         # Trim whitespace
         local f
         f="${raw_file#"${raw_file%%[![:space:]]*}"}"
         f="${f%"${f##*[![:space:]]}"}"
         [[ -z "$f" ]] && continue
+
+        # Block dangerous glob paths (. and *)
+        for glob in "${BLOCKED_GLOBS[@]}"; do
+            if [[ "$f" == "$glob" ]]; then
+                printf '{"error":"Blocked: staging %s is not allowed — use explicit file paths"}\n' "$f"
+                exit 1
+            fi
+        done
+
+        # Block sensitive file patterns
+        local basename_f
+        basename_f=$(basename "$f")
+        for pattern in "${BLOCKED_PATTERNS[@]}"; do
+            # shellcheck disable=SC2254
+            case "$basename_f" in
+                $pattern)
+                    printf '{"error":"Blocked: %s matches sensitive file pattern %s"}\n' \
+                        "$(json_str "$f")" "$(json_str "$pattern")"
+                    exit 1
+                    ;;
+            esac
+        done
 
         local stderr_file
         stderr_file=$(mktemp)
@@ -904,6 +931,82 @@ tool_stage_files() {
 }
 
 # ---------------------------------------------------------------------------
+# tool: commit_status
+# Groups git status --porcelain output by area prefix and suggests commit messages.
+# ---------------------------------------------------------------------------
+
+tool_commit_status() {
+    parse_named_args "$@"
+    local repo_path
+    repo_path=$(opt "repo-path" "")
+    check_git
+    setup_repo_path "$repo_path"
+
+    local porcelain
+    local stderr_file
+    stderr_file=$(mktemp)
+    if ! porcelain=$(git status --porcelain 2>"$stderr_file"); then
+        local stderr_content
+        stderr_content=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        json_error "git status failed" 1 "$stderr_content"
+    fi
+    rm -f "$stderr_file"
+
+    python3 - "$porcelain" <<'PYEOF'
+import sys, json, os
+
+porcelain = sys.argv[1]
+
+# Map directory prefixes to commit message prefix labels
+AREA_MAP = [
+    ("server/",  "[server]"),
+    ("client/",  "[client]"),
+    ("shared/",  "[shared]"),
+    ("docs/",    "[docs]"),
+    (".claude/", "[process]"),
+    ("bin/",     "[tools]"),
+]
+
+def get_area(path):
+    for prefix, label in AREA_MAP:
+        if path.startswith(prefix):
+            return (prefix.rstrip("/"), label)
+    return ("other", "[chore]")
+
+groups = {}  # area -> {"prefix": str, "files": [str]}
+
+for line in porcelain.splitlines():
+    if len(line) < 2:
+        continue
+    path = line[3:]
+    # Handle renames: "old -> new"
+    if " -> " in path:
+        path = path.split(" -> ")[-1]
+    area_key, prefix = get_area(path)
+    if area_key not in groups:
+        groups[area_key] = {"area": area_key, "prefix": prefix, "files": []}
+    groups[area_key]["files"].append(path)
+
+result = []
+for area_key, grp in sorted(groups.items()):
+    first_file = grp["files"][0]
+    basename = os.path.basename(first_file)
+    # Suggest a message: prefix + short description hint
+    hint = os.path.splitext(basename)[0]
+    suggested = f'{grp["prefix"]} update {hint}' if len(grp["files"]) == 1 else f'{grp["prefix"]} update {len(grp["files"])} files'
+    result.append({
+        "area": area_key,
+        "prefix": grp["prefix"],
+        "files": grp["files"],
+        "suggested_message": suggested,
+    })
+
+print(json.dumps({"groups": result}))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
 # tool: create_commit
 # ---------------------------------------------------------------------------
 
@@ -915,6 +1018,15 @@ tool_create_commit() {
     local message="${OPTS[message]}"
     local co_author
     co_author=$(opt "co-author" "Claude Opus 4.6 (1M context) <noreply@anthropic.com>")
+
+    # Safety: refuse hook-bypass flags regardless of how they were passed.
+    if [[ -n "${OPTS[no-verify]:-}" || -n "${OPTS[no_verify]:-}" ]]; then
+        json_error "Blocked: --no-verify is not allowed — hooks must not be bypassed" 1
+    fi
+    if [[ -n "${OPTS[no-gpg-sign]:-}" || -n "${OPTS[no_gpg_sign]:-}" ]]; then
+        json_error "Blocked: --no-gpg-sign is not allowed" 1
+    fi
+
     check_git
     setup_repo_path "$repo_path"
 
@@ -1017,15 +1129,16 @@ case "$TOOL" in
     git_diff)       tool_git_diff       "$@" ;;
     git_log)        tool_git_log        "$@" ;;
     stage_files)    tool_stage_files    "$@" ;;
+    commit_status)  tool_commit_status  "$@" ;;
     create_commit)  tool_create_commit  "$@" ;;
     git_push)       tool_git_push       "$@" ;;
     sub_issue)      tool_sub_issue      "$@" ;;
     "")
-        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push","sub_issue"]}\n'
+        printf '{"error":"No tool specified","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","commit_status","create_commit","git_push","sub_issue"]}\n'
         exit 1
         ;;
     *)
-        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","create_commit","git_push","sub_issue"]}\n' "$(json_str "$TOOL")"
+        printf '{"error":"Unknown tool: %s","available":["list_issues","create_issue","close_issue","batch_close","reopen_issue","view_issue","add_comment","search_issues","git_status","git_diff","git_log","stage_files","commit_status","create_commit","git_push","sub_issue"]}\n' "$(json_str "$TOOL")"
         exit 1
         ;;
 esac
